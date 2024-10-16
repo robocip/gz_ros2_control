@@ -50,3 +50,12 @@ rosdep install -r --from-paths . --ignore-src --rosdistro $ROS_DISTRO -y
 cd ~/ign_ros2_control_ws
 colcon build
 ```
+
+## Changes at the fork
+
+The following changes were made in this fork.
+
+1. Fix mimicry operations
+    - In Ignition Gazebo Fortress, mimicked joints may not be driven.  
+    Therefore, change so that the actual driven joints (mimicked joints) are directly driven.  
+    See definition `TEMP_FIX_MIMIC_OPERATION` in the source code for details.

@@ -43,6 +43,11 @@
 
 #include <hardware_interface/hardware_info.hpp>
 
+// Enable temporary fix for mimicry operations.
+//   In Ignition Gazebo Fortress, mimicked joints may not be driven.
+//   Therefore, change so that the actual driven joints (mimicked joints) are directly driven.
+#define TEMP_FIX_MIMIC_OPERATION (1)
+
 struct jointData
 {
   /// \brief Joint's names.
@@ -545,11 +550,35 @@ hardware_interface::return_type IgnitionSystem::read(
     //   this->dataPtr->sim_joints_[j]);
 
     // Get the joint position
+#if TEMP_FIX_MIMIC_OPERATION
+    // Estimate based on the position of one of the mimicked joints, since the position
+    // cannot be obtained in the case of mimicked joints.
+    bool is_mimicked_joint = false;
+    unsigned int mimic_joint_index = 0;
+    double mimic_joint_multiplier = 0.0;
+    for (const auto & mimic_joint : this->dataPtr->mimic_joints_) {
+      if (i == mimic_joint.mimicked_joint_index) {
+        is_mimicked_joint = true;
+        mimic_joint_index = mimic_joint.joint_index;
+        mimic_joint_multiplier = mimic_joint.multiplier;
+        break;
+      }
+    }
+    if (is_mimicked_joint) {
+      const auto * jointPositions =
+        this->dataPtr->ecm->Component<ignition::gazebo::components::JointPosition>(
+        this->dataPtr->joints_[mimic_joint_index].sim_joint);
+      this->dataPtr->joints_[i].joint_position = jointPositions->Data()[0] / mimic_joint_multiplier;;
+    } else {
+#endif /* TEMP_FIX_MIMIC_OPERATION */
     const auto * jointPositions =
       this->dataPtr->ecm->Component<ignition::gazebo::components::JointPosition>(
       this->dataPtr->joints_[i].sim_joint);
 
     this->dataPtr->joints_[i].joint_position = jointPositions->Data()[0];
+#if TEMP_FIX_MIMIC_OPERATION
+    }
+#endif /* TEMP_FIX_MIMIC_OPERATION */
     this->dataPtr->joints_[i].joint_velocity = jointVelocity->Data()[0];
     // this->dataPtr->joint_effort_[j] = jointForce->Data()[0];
   }
@@ -698,6 +727,20 @@ hardware_interface::return_type IgnitionSystem::write(
   for (const auto & mimic_joint : this->dataPtr->mimic_joints_) {
     for (const auto & mimic_interface : mimic_joint.interfaces_to_mimic) {
       if (mimic_interface == "position") {
+#if TEMP_FIX_MIMIC_OPERATION
+        double position_mimicked_joint_cmd =
+          this->dataPtr->joints_[mimic_joint.mimicked_joint_index].joint_position_cmd;
+
+        double position_mimic_joint =
+          this->dataPtr->ecm->Component<ignition::gazebo::components::JointPosition>(
+          this->dataPtr->joints_[mimic_joint.joint_index].sim_joint)->Data()[0];
+
+        double position_error =
+          position_mimic_joint - (position_mimicked_joint_cmd * mimic_joint.multiplier);
+
+        double velocity_sp =
+          (-1.0) * this->dataPtr->position_proportional_gain_ * position_error * (*this->dataPtr->update_rate);
+#else /* TEMP_FIX_MIMIC_OPERATION */
         // Get the joint position
         double position_mimicked_joint =
           this->dataPtr->ecm->Component<ignition::gazebo::components::JointPosition>(
@@ -711,6 +754,7 @@ hardware_interface::return_type IgnitionSystem::write(
           position_mimic_joint - position_mimicked_joint * mimic_joint.multiplier;
 
         double velocity_sp = (-1.0) * position_error * (*this->dataPtr->update_rate);
+#endif /* TEMP_FIX_MIMIC_OPERATION */
 
         auto vel =
           this->dataPtr->ecm->Component<ignition::gazebo::components::JointVelocityCmd>(
